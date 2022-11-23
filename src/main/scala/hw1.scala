@@ -23,7 +23,7 @@ object peopleYouMightKnow extends App {
 
   val output = suggestions.map( data => (data._1,{data._2.map(s => s._2)}))map(x => (x._1,x._2.toString))
 
-  output.coalesce(1).saveAsTextFile("suggestions")
+  output.coalesce(1).saveAsTextFile("suggestions  ")
   spark.stop()
 
 }
