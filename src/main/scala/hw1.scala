@@ -21,9 +21,9 @@ object peopleYouMightKnow extends App {
   val groupedList = fullList.filter(_._2 > 0).map( tuple =>  (tuple._1._1, (tuple._2, tuple._1._2))).groupByKey().map(x => (x._1,x._2.toList))
   val suggestions = groupedList.map( data => (data._1, data._2.sortBy(_._1).reverse)).map(x => (x._1,x._2.take(10)))
 
-  val output = suggestions.map( data => (data._1,{data._2.map(s => s._2)}))map(x => (x._1,x._2.toString))
+  val output = suggestions.map( data => (data._1,{data._2.map(s => s._2)})).map(x => (x._1,x._2.mkString(" ")))
 
-  output.coalesce(1).saveAsTextFile("suggestions")
+  output.saveAsTextFile("result")
   spark.stop()
 
 }
