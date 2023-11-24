@@ -1,0 +1,273 @@
+id = "WriteGeos"
+desc = "Write Geo point from Geos Collection "
+steps = [
+    //Import UDF
+    {
+        id = idroPost
+        shortDesc = "registrazione classe che trasforma il punt"
+        kind = udf
+        claz = com.github.supermariolabs.spooq.udf.utils.IdroPost
+    },
+    {
+        id = artefattijson
+        shortDesc = "Lettura artefatti da miniio"
+        kind = input
+        format = json
+        path = "${params.path}/resources/artefatti.geojson"
+        options = {
+            multiLine = "true"
+            mode = "PERMISSIVE"
+        }
+        show = false
+    },
+    {
+        id = cantierijson
+        shortDesc = "Lettura cantieri da miniio"
+        kind = input
+        format = json
+        path = "${params.path}/resources/cantieri.geojson"
+        options = {
+            multiLine = "true"
+            mode = "PERMISSIVE"
+        }
+        show = false
+    },
+    {
+        id = cantieri
+        shortDesc = "Estrazione coordinate dal geoJson cantierijson"
+        kind = sql
+        sql = """( WITH geos AS ( SELECT explode( ( SELECT features FROM cantierijson ) ) ) SELECT ST_SetSRID( ST_Transform( ST_GeomFromGeoJson( to_json(geos.col.geometry) ), 'epsg:4326', 'epsg:32633' ), 32633 ) geometry FROM geos ) """
+        show = false
+    }
+    {
+        id = artefatti
+        shortDesc = "Estrazione coordinate dal geoJson artefattijson"
+        kind = sql
+        sql = """( WITH geos AS ( SELECT explode( ( SELECT features FROM artefattijson ) ) ) SELECT ST_SetSRID( ST_Transform( ST_GeomFromGeoJson( to_json(geos.col.geometry) ), 'epsg:4326', 'epsg:32633' ), 32633 ) geometry FROM geos ) """
+        show = false
+    }
+    {
+        id = Poi
+        shortDesc = "Lista di tutti i poi"
+        kind = sql
+        sql = """select ST_Centroid(geometry) centroid, ST_Point(ST_XMin(cantieri.geometry),ST_YMin(cantieri.geometry)) min, ST_Point(ST_XMax(cantieri.geometry),ST_YMax(cantieri.geometry)) max from cantieri union select ST_Centroid(geometry) centroid, ST_Point(ST_XMin(artefatti.geometry),ST_YMin(artefatti.geometry)) min, ST_Point(ST_XMax(artefatti.geometry),ST_YMax(artefatti.geometry)) max from artefatti"""
+        show = false
+    }
+
+    
+
+    {
+        id = inputH
+        shortDesc = "Lettura geotiff tirante idrogeologico"
+        kind = input
+        format = binaryFile
+        path = "${params.path}/meteodata/*h_c.tif"
+        options = {
+            dropInvalid = "true"
+        }
+        show = false
+    },
+    {
+        id = H
+        shortDesc = "Estrazione raster da tirante idrogeologico"
+        kind = sql
+        sql = """select *, RS_FromGeoTiff(content) raster from inputH"""
+        show = false
+        cache = false
+    }
+
+    {
+        id = spectrum
+        shortDesc = "Estrazione raster da tirante idrogeologico"
+        kind = sql
+        sql = """select RS_MetaData(H.raster) metadata, RS_MakeEmptyRaster(1,metadata[2],metadata[3],metadata[0],metadata[1],metadata[4],metadata[5],metadata[6],metadata[7],32633) raster  from H"""
+        show = false
+        cache = false
+    }
+
+    {
+        id = inputU
+        shortDesc = "Lettura geotiff tirante idrogeologico"
+        kind = input
+        format = binaryFile
+        path = "${params.path}/meteodata/*u_c.tif"
+        options = {
+            dropInvalid = "true"
+        }
+        show = false
+    },
+    {
+        id = U
+        shortDesc = "Estrazione raster da tirante idrogeologico"
+        kind = sql
+        sql = """select *, RS_FromGeoTiff(content) raster from inputU"""
+        show = false
+        cache = false
+
+    }
+
+    {
+        id = newPoi
+        shortDesc = "Estrazione raster da tirante idrogeologico"
+        kind = sql
+        sql = """select Poi.centroid, Array( RS_WorldToRasterCoordX(raster,min), RS_WorldToRasterCoordY(raster,max), RS_WorldToRasterCoordX(raster,max), RS_WorldToRasterCoordY(raster,min) ) coordinates  from spectrum, Poi """
+        show = false
+        cache = false
+
+    }
+
+     {
+        id = custom
+        shortDesc = "custom step"
+        kind = custom
+        claz = com.github.supermariolabs.spooq.api.ExtractBands
+
+    },
+
+ 
+   
+
+    {
+        id = inputUBand
+        shortDesc = "Lettura geotiff tirante idrogeologico"
+        kind = input
+        format = parquet
+        path = "${params.path}/bandeU"
+        options = {
+            dropInvalid = "true"
+        }
+        show = false
+    },
+    {
+        id = inputHBand
+        shortDesc = "Lettura geotiff tirante idrogeologico"
+        kind = input
+        format = parquet
+        path = "${params.path}/bandeH"
+        options = {
+            dropInvalid = "true"
+        }
+        show = false
+    },
+
+
+
+
+
+     {
+        id = fetchValuesH
+        shortDesc = "Estrazione valori del tirante della regione in cui vengono proiettati i poligoni"
+        kind = sql
+        sql = """select bandNumber, RS_FetchRegion(bandValues,coordinates,Array(metadata[3],metadata[2]) ) regValuesH, centroid from inputHBand, newPoi,spectrum """
+        show = false
+    }
+    {
+        id = fetchValuesU
+        shortDesc = "Estrazione valori del tirante della regione in cui vengono proiettati i poligoni"
+        kind = sql
+        sql = """select bandNumber, RS_FetchRegion(bandValues,coordinates,Array(metadata[3],metadata[2])) regValuesU, centroid from inputUBand, newPoi, spectrum """
+        show = false
+    }
+
+
+     {
+        id = tmp
+        shortDesc = "tabella contenente centroide del poligono, max tirante e max meteo"
+        kind = sql
+        sql = """select fetchValuesH.bandNumber, ST_FlipCoordinates(ST_Transform(fetchValuesH.centroid,'epsg:32633','epsg:4326')) centroid, array_max(fetchValuesU.regValuesU) maxU, array_max(fetchValuesH.regValuesH) maxH from fetchValuesH left join fetchValuesU on fetchValuesH.centroid == fetchValuesU.centroid and fetchValuesU.bandNumber==fetchValuesH.bandNumber"""
+        show = false
+    }
+
+    {
+        id = out
+        shortDesc = "scrittura tabella intermedia con i volori  del tirante in relazione ai poligoni"
+        kind = output
+        source = tmp
+        format = parquet
+        path = "${params.path}/tmp/results"
+        mode = overwrite
+
+    },
+
+{
+        id = results
+        shortDesc = "Lettura geotiff tirante idrogeologico"
+        kind = input
+        format = parquet
+        path = "${params.path}/tmp/results"
+        show = false
+    },
+
+     {
+        id = scoreFirst
+        shortDesc = "valorizzazioone valore allarme"
+        kind = sql
+        sql = """SELECT ST_X(centroid) X, ST_Y(centroid) Y, IF(cast(maxU*maxH as double) <= LOG(maxH), IF(cast(maxU*maxH as double) >= CAST(0.25 as double), 'Medium', 'Low'), 'High') code, bandNumber, cast(maxU*maxH as double) score, centroid FROM results where bandNumber == (select min(bandNumber) from results) """
+        show = false
+    }
+    {
+        id = events
+        shortDesc = "valorizzazioone valore allarme"
+        kind = sql
+        sql = """SELECT IdroPost(X,Y,code,'Monitoraggio','Segnalazione di rischio idrogeologico','${params.postEndpoint}'), score, centroid FROM scoreFirst """
+        show = true
+        cache = true
+    }
+
+     {
+        id = scoreNotFirst
+        shortDesc = "valorizzazioone valore allarme"
+        kind = sql
+        sql = """ SELECT ST_X(centroid) X, ST_Y(centroid) Y, IF(cast(maxU*maxH as double) <= LOG(maxH), IF(cast(maxU*maxH as double) >= CAST(0.25 as double), 'Medium', 'Low'), 'High') code, bandNumber, cast(maxU*maxH as double) score, centroid FROM results where bandNumber > (select min(bandNumber) from results)  and (centroid NOT IN ( SELECT centroid FROM scoreFirst ) or cast(maxU*maxH as double) > (select max(score) from scoreFirst where centroid==scoreFirst.centroid)) """
+        show = false
+    }
+    {
+        id = events
+        shortDesc = "valorizzazioone valore allarme"
+        kind = sql
+        sql = """SELECT IdroPost(X,Y,code,'Monitoraggio','Segnalazione di rischio idrogeologico','${params.postEndpoint}'), score, centroid FROM scoreNotFirst where score == (select max(score) from scoreNotFirst where centroid==scoreNotFirst.centroid) """
+        show = true
+        cache = true
+    }
+
+
+
+    {
+        id = inputDamBreak
+        shortDesc = "Lettura probabilità esondazione da miniio"
+        kind = input
+        format = csv
+        path = "${params.path}/meteodata/Dam_Break.csv"
+        options = {
+            header = "true"
+        }
+        show = false
+    },
+
+    {
+        id = extractPercent
+        shortDesc = "estrapolazione percentuale"
+        kind = sql
+        sql = """select DOUBLE(Left(RIGHT(Phi, 6),5)) percent from inputDamBreak """
+        show = false
+    }
+
+    {
+        id = extractPercentTmp
+        shortDesc = "conteggio delle percentuali sopra la soglia"
+        kind = sql
+        sql = """select count(*) count from extractPercent where percent > ${params.soil} """
+        show = false
+    }
+    {
+        id = generateEvents
+        shortDesc = "generazione eventi"
+        kind = sql
+        sql = """select IdroPost(39.71461,16.48763,'High','Monitoraggio','Pericolo rottura argine crati','${params.postEndpoint}') from extractPercentTmp where count >=1  """
+        show = true
+        cache = true
+    }
+   
+   
+
+]
